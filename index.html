@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Maternova</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<h1>Maternova</h1>
+<h3>Maternal Health Data Capture System</h3>
+
+<form id="motherForm">
+    <input type="text" placeholder="Full Name" id="fullName" required>
+    <input type="text" placeholder="National ID" id="nationalId">
+    <input type="date" id="dob">
+    <input type="text" placeholder="Phone" id="phone">
+    <input type="text" placeholder="Address" id="address">
+
+    <h4>Obstetric History</h4>
+    <input type="number" placeholder="Gravidity" id="gravidity">
+    <input type="number" placeholder="Parity" id="parity">
+    
+    <h4>Clinical Data</h4>
+    <input type="text" placeholder="Blood Pressure" id="bloodPressure">
+    <input type="number" placeholder="Weight (kg)" id="weight">
+    <input type="text" placeholder="Blood Group" id="bloodGroup">
+    <input type="text" placeholder="HIV Status" id="hivStatus">
+
+    <textarea placeholder="Risk Factors / Notes" id="riskFactors"></textarea>
+
+    <button type="submit">Save</button>
+</form>
+
+<hr>
+
+<h3>Registered Mothers</h3>
+<ul id="motherList"></ul>
+
+<script src="script.js"></script>
+
+</body>
+</html>
