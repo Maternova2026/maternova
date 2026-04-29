@@ -2,14 +2,17 @@ from flask import Flask, render_template_string, redirect, url_for, flash, reque
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, date
-import json
+from datetime import datetime
 import os
+
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
-import os
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///maternova.db')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or os.urandom(32)
+
+_db_url = os.environ.get('DATABASE_URL', 'sqlite:///maternova.db')
+if _db_url.startswith('postgres://'):
+    _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -1364,6 +1367,7 @@ APPOINTMENTS_TEMPLATE = '''
                                 <th>Doctor</th>
                                 <th>Reason</th>
                                 <th>Status</th>
+                                <th>Update</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1373,7 +1377,37 @@ APPOINTMENTS_TEMPLATE = '''
                                 <td>{{ apt.appointment_time }}</td>
                                 <td>{{ apt.doctor_name }}</td>
                                 <td>{{ apt.reason or 'N/A' }}</td>
-                                <td><span class="badge bg-success">{{ apt.status }}</span></td>
+                                <td>
+                                    {% if apt.status == 'completed' %}
+                                        <span class="badge bg-success">Completed</span>
+                                    {% elif apt.status == 'cancelled' %}
+                                        <span class="badge bg-danger">Cancelled</span>
+                                    {% else %}
+                                        <span class="badge bg-primary">Scheduled</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="d-flex gap-1 flex-wrap">
+                                        {% if apt.status != 'completed' %}
+                                        <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
+                                            <input type="hidden" name="status" value="completed">
+                                            <button type="submit" class="btn btn-sm btn-success">✓ Done</button>
+                                        </form>
+                                        {% endif %}
+                                        {% if apt.status != 'cancelled' %}
+                                        <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
+                                            <input type="hidden" name="status" value="cancelled">
+                                            <button type="submit" class="btn btn-sm btn-danger">✕ Cancel</button>
+                                        </form>
+                                        {% endif %}
+                                        {% if apt.status != 'scheduled' %}
+                                        <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
+                                            <input type="hidden" name="status" value="scheduled">
+                                            <button type="submit" class="btn btn-sm btn-secondary">↺ Reset</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -1728,6 +1762,31 @@ PATIENT_VIEW_TEMPLATE = '''
                 <button class="btn btn-primary" onclick="window.print()">
                     <i class="fas fa-print"></i> Print
                 </button>
+                <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal">
+                    <i class="fas fa-trash"></i> Delete Patient
+                </button>
+            </div>
+        </div>
+
+        <!-- Delete confirmation modal -->
+        <div class="modal fade" id="deleteModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header bg-danger text-white">
+                        <h5 class="modal-title"><i class="fas fa-exclamation-triangle"></i> Confirm Delete</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Are you sure you want to permanently delete <strong>{{ patient.first_name }} {{ patient.last_name }}</strong>?</p>
+                        <p class="text-danger mb-0"><small>This will also delete all vitals, appointments, pregnancy records, and medical history for this patient. This action cannot be undone.</small></p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <form method="POST" action="/patients/{{ patient.id }}/delete" style="display:inline;">
+                            <button type="submit" class="btn btn-danger">Yes, Delete</button>
+                        </form>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1837,6 +1896,7 @@ PATIENT_VIEW_TEMPLATE = '''
             </div>
         </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
 '''
@@ -2769,7 +2829,7 @@ def create_patient():
 @app.route('/patients/<int:patient_id>')
 @login_required
 def view_patient(patient_id):
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.get_or_404(Patient, patient_id)
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
@@ -2785,7 +2845,7 @@ def view_patient(patient_id):
 @app.route('/vitals/<int:patient_id>', methods=['GET', 'POST'])
 @login_required
 def vitals(patient_id):
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.get_or_404(Patient, patient_id)
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
@@ -2815,7 +2875,7 @@ def vitals(patient_id):
 @app.route('/appointments/<int:patient_id>', methods=['GET', 'POST'])
 @login_required
 def appointments(patient_id):
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.get_or_404(Patient, patient_id)
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
@@ -2841,7 +2901,7 @@ def appointments(patient_id):
 @app.route('/pregnancy/<int:patient_id>', methods=['GET', 'POST'])
 @login_required
 def pregnancy(patient_id):
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.get_or_404(Patient, patient_id)
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
@@ -2869,7 +2929,7 @@ def pregnancy(patient_id):
 @app.route('/medical-history/<int:patient_id>', methods=['GET', 'POST'])
 @login_required
 def medical_history(patient_id):
-    patient = Patient.query.get_or_404(patient_id)
+    patient = db.get_or_404(Patient, patient_id)
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
@@ -2894,6 +2954,54 @@ def medical_history(patient_id):
     histories = MedicalHistory.query.filter_by(patient_id=patient_id, hospital=current_user.hospital).order_by(MedicalHistory.recorded_at.desc()).all()
     return render_template_string(MEDICAL_HISTORY_TEMPLATE, patient=patient, histories=histories)
 
+@app.route('/patients/<int:patient_id>/delete', methods=['POST'])
+@login_required
+def delete_patient(patient_id):
+    """Delete a patient and all their associated records."""
+    patient = db.get_or_404(Patient, patient_id)
+    if patient.hospital != current_user.hospital:
+        flash('Access denied', 'danger')
+        return redirect(url_for('list_patients'))
+
+    name = f"{patient.first_name} {patient.last_name}"
+    try:
+        # Delete all related records first (FK constraints)
+        VitalSign.query.filter_by(patient_id=patient_id).delete()
+        Appointment.query.filter_by(patient_id=patient_id).delete()
+        PregnancyRecord.query.filter_by(patient_id=patient_id).delete()
+        MedicalHistory.query.filter_by(patient_id=patient_id).delete()
+        db.session.delete(patient)
+        db.session.commit()
+        flash(f'Patient {name} and all related records have been deleted.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting patient: {str(e)}', 'danger')
+
+    return redirect(url_for('list_patients'))
+
+
+@app.route('/appointments/<int:appointment_id>/status', methods=['POST'])
+@login_required
+def update_appointment_status(appointment_id):
+    """Update appointment status (scheduled / completed / cancelled)."""
+    appointment = db.get_or_404(Appointment, appointment_id)
+    patient = db.get_or_404(Patient, appointment.patient_id)
+
+    if patient.hospital != current_user.hospital:
+        flash('Access denied', 'danger')
+        return redirect(url_for('list_patients'))
+
+    new_status = request.form.get('status')
+    if new_status not in ('scheduled', 'completed', 'cancelled'):
+        flash('Invalid status value.', 'danger')
+        return redirect(url_for('appointments', patient_id=appointment.patient_id))
+
+    appointment.status = new_status
+    db.session.commit()
+    flash(f'Appointment status updated to "{new_status}".', 'success')
+    return redirect(url_for('appointments', patient_id=appointment.patient_id))
+
+
 @app.route('/analytics')
 @login_required
 def analytics():
@@ -2904,7 +3012,7 @@ def analytics():
 
     # Pull all vitals for BP categorization (only where systolic is recorded)
     all_vitals = VitalSign.query.filter_by(hospital=hospital)\
-                    .filter(VitalSign.blood_pressure_systolic != None).all()
+                    .filter(VitalSign.blood_pressure_systolic.isnot(None)).all()
 
     bp_normal   = sum(1 for v in all_vitals if v.blood_pressure_systolic < 120)
     bp_elevated = sum(1 for v in all_vitals if 120 <= v.blood_pressure_systolic < 140)
@@ -2964,4 +3072,3 @@ def logout():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-    
