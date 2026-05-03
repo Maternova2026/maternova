@@ -1,0 +1,176 @@
+{
+  "analysis_date": "2026-05-02T18:08:06.601253",
+  "total_quality_score": 78.3023973609122,
+  "characteristic_scores": {
+    "Functionality": 81.46929824561404,
+    "Reliability": 71.56862745098039,
+    "Usability": 86.66666666666667,
+    "Efficiency": 80.65476190476191,
+    "Maintainability": 49.455029897450196,
+    "Portability": 100.0
+  },
+  "detailed_metrics": {
+    "Functionality": {
+      "description": "The set of attributes that bear on the existence of a set of functions and their specified properties",
+      "score": 81.46929824561404,
+      "metrics": [
+        {
+          "name": "function_coverage",
+          "value": 65.0,
+          "unit": "%",
+          "description": "Percentage of functions with test coverage",
+          "target": 80.0
+        },
+        {
+          "name": "api_completeness",
+          "value": 100.0,
+          "unit": "%",
+          "description": "Percentage of required API endpoints implemented",
+          "target": 90.0
+        },
+        {
+          "name": "input_validation",
+          "value": 60,
+          "unit": "%",
+          "description": "Percentage of inputs with proper validation",
+          "target": 95.0
+        }
+      ]
+    },
+    "Reliability": {
+      "description": "The capability of software to maintain its level of performance under stated conditions for a stated period of time",
+      "score": 71.56862745098039,
+      "metrics": [
+        {
+          "name": "defect_density",
+          "value": 1.6265452179570592,
+          "unit": "defects/KLOC",
+          "description": "Number of defects per thousand lines of code",
+          "target": 1.0
+        },
+        {
+          "name": "error_handling_coverage",
+          "value": 12.5,
+          "unit": "%",
+          "description": "Percentage of functions with proper error handling",
+          "target": 85.0
+        },
+        {
+          "name": "code_stability",
+          "value": 80.6,
+          "unit": "score",
+          "description": "Code stability score based on complexity and structure",
+          "target": 80.0
+        }
+      ]
+    },
+    "Usability": {
+      "description": "The effort needed for use, and on the individual assessment of such use, by a stated or implied set of users",
+      "score": 86.66666666666667,
+      "metrics": [
+        {
+          "name": "ui_consistency",
+          "value": 100.0,
+          "unit": "%",
+          "description": "Percentage of consistent UI elements",
+          "target": 90.0
+        },
+        {
+          "name": "navigation_complexity",
+          "value": 7.5,
+          "unit": "score",
+          "description": "Navigation complexity score (lower is better)",
+          "target": 5.0
+        },
+        {
+          "name": "form_feedback_quality",
+          "value": 51,
+          "unit": "%",
+          "description": "Quality of form validation feedback",
+          "target": 85.0
+        }
+      ]
+    },
+    "Efficiency": {
+      "description": "The relationship between the level of performance of the software and the amount of resources used",
+      "score": 80.65476190476191,
+      "metrics": [
+        {
+          "name": "code_efficiency",
+          "value": 80,
+          "unit": "score",
+          "description": "Code efficiency score based on algorithmic complexity",
+          "target": 75.0
+        },
+        {
+          "name": "database_efficiency",
+          "value": 45,
+          "unit": "%",
+          "description": "Percentage of optimized database queries",
+          "target": 80.0
+        },
+        {
+          "name": "resource_efficiency",
+          "value": 60,
+          "unit": "score",
+          "description": "Resource usage efficiency score",
+          "target": 70.0
+        }
+      ]
+    },
+    "Maintainability": {
+      "description": "The effort needed to make specified modifications",
+      "score": 49.455029897450196,
+      "metrics": [
+        {
+          "name": "code_structure",
+          "value": 32,
+          "unit": "score",
+          "description": "Code structure quality score",
+          "target": 80.0
+        },
+        {
+          "name": "documentation_quality",
+          "value": 5.855562784645413,
+          "unit": "%",
+          "description": "Percentage of well-documented functions",
+          "target": 70.0
+        },
+        {
+          "name": "modularity",
+          "value": 92,
+          "unit": "score",
+          "description": "Code modularity score",
+          "target": 75.0
+        }
+      ]
+    },
+    "Portability": {
+      "description": "The ability of software to be transferred from one environment to another",
+      "score": 100.0,
+      "metrics": [
+        {
+          "name": "platform_independence",
+          "value": 100.0,
+          "unit": "score",
+          "description": "Platform independence score",
+          "target": 70.0
+        },
+        {
+          "name": "configuration_management",
+          "value": 100.0,
+          "unit": "%",
+          "description": "Percentage of externalized configuration",
+          "target": 85.0
+        },
+        {
+          "name": "dependency_management",
+          "value": 90.0,
+          "unit": "score",
+          "description": "Dependency management quality",
+          "target": 75.0
+        }
+      ]
+    }
+  }
+}
