@@ -4,11 +4,20 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import os
+import math
+
+# ── Reliability Engineering Targets (SENG 421 Ch9) ───────────────────────────
+FIO_TARGET           = 0.00125   # λF — target: max 0.00125 failures/hour
+RELIABILITY_TARGET   = 0.99      # 99% reliability per 8-hour clinical shift
+OPERATION_HOURS      = 8         # natural unit = one clinical shift
+DOWNTIME_PER_FAILURE = 0.1       # estimated 6 minutes (0.1 hr) per incident
+RELEASE_THRESHOLD    = 0.5       # λ/λF ≤ 0.5 required before release
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or os.urandom(32)
 
+# Render/Heroku set DATABASE_URL with 'postgres://' but SQLAlchemy needs 'postgresql://'
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///maternova.db')
 if _db_url.startswith('postgres://'):
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
@@ -107,11 +116,36 @@ class MedicalHistory(db.Model):
 
     patient = db.relationship('Patient', backref='medical_histories')
 
+
+class SystemFailure(db.Model):
+    """
+    Automatically records every unhandled application failure.
+
+    Purpose: Provides real failure data for SENG 421 Ch9 reliability analysis
+    (MTTF, MTTR, Laplace trend, λ/λF ratio). The full analysis using this
+    data is documented in README.md under 'Software Reliability'.
+
+    Error → Fault → Failure chain (Ch9, slide 6):
+      Error   = human mistake during development
+      Fault   = the resulting bug in code
+      Failure = observable departure from expected behaviour  ← stored here
+    """
+    id            = db.Column(db.Integer, primary_key=True)
+    timestamp     = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    operation     = db.Column(db.String(200))       # route / endpoint that failed
+    error_type    = db.Column(db.String(200))       # Python exception class name
+    error_message = db.Column(db.Text)              # full error message (truncated)
+    user_hospital = db.Column(db.String(200), default='unknown')
+    severity      = db.Column(db.Integer, default=1)  # 1=low 2=medium 3=critical
+    resolved      = db.Column(db.Boolean, default=False)
+    resolved_at   = db.Column(db.DateTime, nullable=True)
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
 
-# Create tables
+# Create all tables including SystemFailure
 with app.app_context():
     db.create_all()
     if not User.query.filter_by(username='admin').first():
@@ -130,6 +164,62 @@ with app.app_context():
         print("✓ SYSTEM READY!")
         print("  Admin Login: admin / admin123")
         print("="*50 + "\n")
+
+# ── Global Error Handler ──────────────────────────────────────────────────────
+@app.errorhandler(Exception)
+def handle_exception(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e   # let Flask handle 404 / 403 / etc. normally
+
+    severity = 1
+    if 'SQLAlchemy' in type(e).__name__:
+        severity = 3   # database errors risk patient data — critical
+    elif isinstance(e, (KeyError, AttributeError, TypeError)):
+        severity = 2
+
+    try:
+        hospital = current_user.hospital if current_user.is_authenticated else 'unknown'
+        failure = SystemFailure(
+            operation     = request.endpoint or request.path or 'unknown',
+            error_type    = type(e).__name__,
+            error_message = str(e)[:1000],
+            user_hospital = hospital,
+            severity      = severity,
+        )
+        db.session.add(failure)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()   # never let logging crash the app
+
+    return render_template_string('''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Error - Maternova</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<div class="container mt-5">
+  <div class="row justify-content-center">
+    <div class="col-md-6">
+      <div class="card border-danger shadow-sm">
+        <div class="card-header bg-danger text-white">
+          <strong>⚠ Maternova — Unexpected Error</strong>
+        </div>
+        <div class="card-body">
+          <p class="mb-2">Something went wrong. The incident has been logged automatically.</p>
+          <p class="text-muted small mb-3">{{ error }}</p>
+          <a href="/dashboard" class="btn btn-primary btn-sm">Return to Dashboard</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
+''', error=str(e)), 500
+
 
 # ==================== TEMPLATES ====================
 LOGIN_TEMPLATE = '''
@@ -1362,12 +1452,8 @@ APPOINTMENTS_TEMPLATE = '''
                     <table class="table table-hover">
                         <thead>
                             <tr>
-                                <th>Date</th>
-                                <th>Time</th>
-                                <th>Doctor</th>
-                                <th>Reason</th>
-                                <th>Status</th>
-                                <th>Update</th>
+                                <th>Date</th><th>Time</th><th>Doctor</th>
+                                <th>Reason</th><th>Status</th><th>Update</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1378,35 +1464,26 @@ APPOINTMENTS_TEMPLATE = '''
                                 <td>{{ apt.doctor_name }}</td>
                                 <td>{{ apt.reason or 'N/A' }}</td>
                                 <td>
-                                    {% if apt.status == 'completed' %}
-                                        <span class="badge bg-success">Completed</span>
-                                    {% elif apt.status == 'cancelled' %}
-                                        <span class="badge bg-danger">Cancelled</span>
-                                    {% else %}
-                                        <span class="badge bg-primary">Scheduled</span>
-                                    {% endif %}
+                                    {% if apt.status == 'completed' %}<span class="badge bg-success">Completed</span>
+                                    {% elif apt.status == 'cancelled' %}<span class="badge bg-danger">Cancelled</span>
+                                    {% else %}<span class="badge bg-primary">Scheduled</span>{% endif %}
                                 </td>
                                 <td>
-                                    <div class="d-flex gap-1 flex-wrap">
-                                        {% if apt.status != 'completed' %}
-                                        <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
-                                            <input type="hidden" name="status" value="completed">
-                                            <button type="submit" class="btn btn-sm btn-success">✓ Done</button>
-                                        </form>
-                                        {% endif %}
-                                        {% if apt.status != 'cancelled' %}
-                                        <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
-                                            <input type="hidden" name="status" value="cancelled">
-                                            <button type="submit" class="btn btn-sm btn-danger">✕ Cancel</button>
-                                        </form>
-                                        {% endif %}
-                                        {% if apt.status != 'scheduled' %}
-                                        <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
-                                            <input type="hidden" name="status" value="scheduled">
-                                            <button type="submit" class="btn btn-sm btn-secondary">↺ Reset</button>
-                                        </form>
-                                        {% endif %}
-                                    </div>
+                                    {% if apt.status != 'completed' %}
+                                    <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
+                                        <input type="hidden" name="status" value="completed">
+                                        <button type="submit" class="btn btn-sm btn-success">✓ Done</button>
+                                    </form>{% endif %}
+                                    {% if apt.status != 'cancelled' %}
+                                    <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
+                                        <input type="hidden" name="status" value="cancelled">
+                                        <button type="submit" class="btn btn-sm btn-danger">✕ Cancel</button>
+                                    </form>{% endif %}
+                                    {% if apt.status != 'scheduled' %}
+                                    <form method="POST" action="/appointments/{{ apt.id }}/status" style="display:inline;">
+                                        <input type="hidden" name="status" value="scheduled">
+                                        <button type="submit" class="btn btn-sm btn-secondary">↺ Reset</button>
+                                    </form>{% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -1756,38 +1833,30 @@ PATIENT_VIEW_TEMPLATE = '''
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h2><i class="fas fa-user-circle"></i> Patient Profile</h2>
             <div>
-                <a href="/patients" class="btn btn-secondary">
-                    <i class="fas fa-arrow-left"></i> Back
-                </a>
-                <button class="btn btn-primary" onclick="window.print()">
-                    <i class="fas fa-print"></i> Print
-                </button>
+                <a href="/patients" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
+                <button class="btn btn-primary" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
                 <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal">
                     <i class="fas fa-trash"></i> Delete Patient
                 </button>
             </div>
         </div>
-
-        <!-- Delete confirmation modal -->
         <div class="modal fade" id="deleteModal" tabindex="-1">
-            <div class="modal-dialog">
-                <div class="modal-content">
-                    <div class="modal-header bg-danger text-white">
-                        <h5 class="modal-title"><i class="fas fa-exclamation-triangle"></i> Confirm Delete</h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <p>Are you sure you want to permanently delete <strong>{{ patient.first_name }} {{ patient.last_name }}</strong>?</p>
-                        <p class="text-danger mb-0"><small>This will also delete all vitals, appointments, pregnancy records, and medical history for this patient. This action cannot be undone.</small></p>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <form method="POST" action="/patients/{{ patient.id }}/delete" style="display:inline;">
-                            <button type="submit" class="btn btn-danger">Yes, Delete</button>
-                        </form>
-                    </div>
+            <div class="modal-dialog"><div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">Confirm Delete</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-            </div>
+                <div class="modal-body">
+                    <p>Permanently delete <strong>{{ patient.first_name }} {{ patient.last_name }}</strong>?</p>
+                    <p class="text-danger"><small>All vitals, appointments, pregnancy records and medical history will also be deleted. This cannot be undone.</small></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <form method="POST" action="/patients/{{ patient.id }}/delete" style="display:inline;">
+                        <button type="submit" class="btn btn-danger">Yes, Delete</button>
+                    </form>
+                </div>
+            </div></div>
         </div>
 
         <div class="row">
@@ -2954,6 +3023,7 @@ def medical_history(patient_id):
     histories = MedicalHistory.query.filter_by(patient_id=patient_id, hospital=current_user.hospital).order_by(MedicalHistory.recorded_at.desc()).all()
     return render_template_string(MEDICAL_HISTORY_TEMPLATE, patient=patient, histories=histories)
 
+
 @app.route('/patients/<int:patient_id>/delete', methods=['POST'])
 @login_required
 def delete_patient(patient_id):
@@ -2962,21 +3032,18 @@ def delete_patient(patient_id):
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
-
     name = f"{patient.first_name} {patient.last_name}"
     try:
-        # Delete all related records first (FK constraints)
         VitalSign.query.filter_by(patient_id=patient_id).delete()
         Appointment.query.filter_by(patient_id=patient_id).delete()
         PregnancyRecord.query.filter_by(patient_id=patient_id).delete()
         MedicalHistory.query.filter_by(patient_id=patient_id).delete()
         db.session.delete(patient)
         db.session.commit()
-        flash(f'Patient {name} and all related records have been deleted.', 'success')
+        flash(f'Patient {name} and all related records deleted.', 'success')
     except Exception as e:
         db.session.rollback()
         flash(f'Error deleting patient: {str(e)}', 'danger')
-
     return redirect(url_for('list_patients'))
 
 
@@ -2986,21 +3053,17 @@ def update_appointment_status(appointment_id):
     """Update appointment status (scheduled / completed / cancelled)."""
     appointment = db.get_or_404(Appointment, appointment_id)
     patient = db.get_or_404(Patient, appointment.patient_id)
-
     if patient.hospital != current_user.hospital:
         flash('Access denied', 'danger')
         return redirect(url_for('list_patients'))
-
     new_status = request.form.get('status')
     if new_status not in ('scheduled', 'completed', 'cancelled'):
         flash('Invalid status value.', 'danger')
         return redirect(url_for('appointments', patient_id=appointment.patient_id))
-
     appointment.status = new_status
     db.session.commit()
     flash(f'Appointment status updated to "{new_status}".', 'success')
     return redirect(url_for('appointments', patient_id=appointment.patient_id))
-
 
 @app.route('/analytics')
 @login_required
